@@ -49,6 +49,7 @@ class GameView(context: Context) : View(context) {
     private var spawnTimer = 0f
     private var lastFrameNs = 0L
     private var running = false
+    private var speedScale = 1f           // >1 = more forgiving (Easy), <1 = harder
 
     private val prefs = context.getSharedPreferences("tapgame", Context.MODE_PRIVATE)
 
@@ -75,7 +76,24 @@ class GameView(context: Context) : View(context) {
     }
 
     // ---------- Game logic ----------
+    fun reloadHighScore() {
+        highScore = prefs.getInt("high", 0)
+        invalidate()
+    }
+
+    private fun haptic() {
+        if (prefs.getBoolean("haptics", true)) {
+            performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+        }
+    }
+
     private fun startGame() {
+        // Difficulty setting: 0 = Easy, 1 = Normal, 2 = Hard
+        speedScale = when (prefs.getInt("difficulty", 1)) {
+            0 -> 1.3f
+            2 -> 0.75f
+            else -> 1f
+        }
         targets.clear()
         score = 0
         lives = startingLives
@@ -90,7 +108,7 @@ class GameView(context: Context) : View(context) {
         if (width <= 2 * margin || height <= 2 * margin + 200f) return
         val x = Random.nextFloat() * (width - 2 * margin) + margin
         val y = Random.nextFloat() * (height - 2 * margin - 200f) + margin + 160f
-        val lifetime = baseLifetimeMs - (baseLifetimeMs - minLifetimeMs) * difficulty()
+        val lifetime = (baseLifetimeMs - (baseLifetimeMs - minLifetimeMs) * difficulty()) * speedScale
         targets.add(Target(x, y, circleColors.random(), lifetime))
     }
 
@@ -100,7 +118,7 @@ class GameView(context: Context) : View(context) {
         spawnTimer -= dtMs
         if (spawnTimer <= 0f) {
             spawnTarget()
-            spawnTimer = baseSpawnMs - (baseSpawnMs - minSpawnMs) * difficulty()
+            spawnTimer = (baseSpawnMs - (baseSpawnMs - minSpawnMs) * difficulty()) * speedScale
         }
 
         val it = targets.iterator()
@@ -110,6 +128,7 @@ class GameView(context: Context) : View(context) {
             if (t.age >= t.lifetime) {   // missed it
                 it.remove()
                 lives--
+                haptic()
                 if (lives <= 0) endGame()
             }
         }
@@ -117,10 +136,12 @@ class GameView(context: Context) : View(context) {
 
     private fun endGame() {
         state = State.GAME_OVER
-        if (score > highScore) {
-            highScore = score
-            prefs.edit().putInt("high", highScore).apply()
-        }
+        if (score > highScore) highScore = score
+        prefs.edit()
+            .putInt("high", highScore)
+            .putInt("games", prefs.getInt("games", 0) + 1)
+            .putInt("taps", prefs.getInt("taps", 0) + score)
+            .apply()
     }
 
     private fun radiusOf(t: Target): Float {
@@ -141,6 +162,7 @@ class GameView(context: Context) : View(context) {
                     if (hypot(event.x - t.x, event.y - t.y) <= radiusOf(t) + 12f) {
                         targets.removeAt(i)
                         score++
+                        haptic()
                         break
                     }
                 }
@@ -167,7 +189,7 @@ class GameView(context: Context) : View(context) {
         // HUD
         textPaint.textSize = 56f
         textPaint.textAlign = Paint.Align.LEFT
-        canvas.drawText("Score: $score", 40f, 100f, textPaint)
+        canvas.drawText("Score: $score", 100f, 100f, textPaint)
         textPaint.textAlign = Paint.Align.RIGHT
         canvas.drawText("♥".repeat(lives.coerceAtLeast(0)), width - 40f, 100f, textPaint)
         textPaint.textAlign = Paint.Align.CENTER
